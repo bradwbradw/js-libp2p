@@ -9,6 +9,8 @@ import { tcp } from '@libp2p/tcp'
 import { multiaddr } from '@multiformats/multiaddr'
 import { expect } from 'aegir/chai'
 import { pEvent } from 'p-event'
+import pWaitFor from 'p-wait-for'
+import sinon from 'sinon'
 import { type StubbedInstance, stubInterface } from 'sinon-ts'
 import { DefaultAddressManager } from '../../src/address-manager/index.js'
 import { defaultComponents, type Components } from '../../src/components.js'
@@ -58,8 +60,9 @@ describe('UPnP NAT (TCP)', () => {
     })(components)
 
     client = stubInterface<NatAPI>()
+    client.openPorts = []
 
-    natManager._getClient = async () => {
+    natManager._getClient = () => {
       return client
     }
 
@@ -91,6 +94,18 @@ describe('UPnP NAT (TCP)', () => {
     expect(observed).to.be.empty()
 
     await start(natManager)
+
+    const addObservedAddr = sinon.spy(components.addressManager, 'addObservedAddr')
+
+    components.events.safeDispatchEvent('self:peer:update', {
+      detail: {
+        peer: {}
+      }
+    })
+
+    await pWaitFor(() => addObservedAddr.called, {
+      interval: 100
+    })
 
     observed = components.addressManager.getObservedAddrs().map(ma => ma.toString())
     expect(observed).to.not.be.empty()
@@ -130,7 +145,7 @@ describe('UPnP NAT (TCP)', () => {
     let observed = components.addressManager.getObservedAddrs().map(ma => ma.toString())
     expect(observed).to.be.empty()
 
-    await expect(natManager._start()).to.eventually.be.rejectedWith(/double NAT/)
+    await expect(natManager.mapAddresses()).to.eventually.be.rejectedWith(/double NAT/)
 
     observed = components.addressManager.getObservedAddrs().map(ma => ma.toString())
     expect(observed).to.be.empty()
