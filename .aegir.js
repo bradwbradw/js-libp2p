@@ -1,10 +1,10 @@
-import { webSockets } from '@libp2p/websockets'
-import { mplex } from '@libp2p/mplex'
 import { noise } from '@chainsafe/libp2p-noise'
-import { pipe } from 'it-pipe'
-import { createEd25519PeerId } from '@libp2p/peer-id-factory'
 import { yamux } from '@chainsafe/libp2p-yamux'
+import { mplex } from '@libp2p/mplex'
+import { createEd25519PeerId } from '@libp2p/peer-id-factory'
+import { webSockets } from '@libp2p/websockets'
 import { WebSockets } from '@multiformats/mafmt'
+import { pipe } from 'it-pipe'
 
 /** @type {import('aegir').PartialOptions} */
 export default {
@@ -20,6 +20,7 @@ export default {
       const { identifyService } = await import('./dist/src/identify/index.js')
       const { pingService } = await import('./dist/src/ping/index.js')
       const { fetchService } = await import('./dist/src/fetch/index.js')
+      const { perfService } = await import('./dist/src/perf/index.js')
 
       const peerId = await createEd25519PeerId()
       const libp2p = await createLibp2p({
@@ -47,6 +48,7 @@ export default {
         services: {
           identify: identifyService(),
           ping: pingService(),
+          perfService: perfService(),
           fetch: fetchService(),
           relay: circuitRelayServer({
             reservations: {

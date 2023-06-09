@@ -1,26 +1,42 @@
 /* eslint-env mocha */
 
-import { expect } from 'aegir/chai'
-import Peers from '../fixtures/peers.js'
-import { PerfService } from '../../src/perf/index.js'
 import { mockRegistrar, mockUpgrader, connectionPair } from '@libp2p/interface-mocks'
-import { createFromJSON } from '@libp2p/peer-id-factory'
-import { DefaultConnectionManager } from '../../src/connection-manager/index.js'
+import { EventEmitter } from '@libp2p/interfaces/events'
 import { start, stop } from '@libp2p/interfaces/startable'
-import { CustomEvent } from '@libp2p/interfaces/events'
+import { createEd25519PeerId } from '@libp2p/peer-id-factory'
 import { PersistentPeerStore } from '@libp2p/peer-store'
+import { expect } from 'aegir/chai'
 import { MemoryDatastore } from 'datastore-core'
-import { DefaultComponents } from '../../src/components.js'
+import { stubInterface } from 'sinon-ts'
+import { type Components, defaultComponents } from '../../src/components.js'
+import { DefaultConnectionManager } from '../../src/connection-manager/index.js'
+import { type PerfServiceInit, perfService } from '../../src/perf/index.js'
+import type { ConnectionGater } from '@libp2p/interface-connection-gater'
+import type { TransportManager } from '@libp2p/interface-transport'
 
-async function createComponents (index: number): Promise<DefaultComponents> {
-  const peerId = await createFromJSON(Peers[index])
+const defaultInit: PerfServiceInit = {
+  protocolName: '/perf/1.0.0',
+  maxInboundStreams: 1 << 10,
+  maxOutboundStreams: 1 << 10,
+  timeout: 1000,
+  writeBlockSize: BigInt(64 << 10)
+}
 
-  const components = new DefaultComponents({
+async function createComponents (index: number): Promise<Components> {
+  const peerId = await createEd25519PeerId()
+
+  const events = new EventEmitter()
+
+  const components = defaultComponents({
     peerId,
     registrar: mockRegistrar(),
     upgrader: mockUpgrader(),
-    datastore: new MemoryDatastore()
+    datastore: new MemoryDatastore(),
+    transportManager: stubInterface<TransportManager>(),
+    connectionGater: stubInterface<ConnectionGater>(),
+    events
   })
+
   components.peerStore = new PersistentPeerStore(components)
   components.connectionManager = new DefaultConnectionManager(components, {
     minConnections: 50,
@@ -33,8 +49,8 @@ async function createComponents (index: number): Promise<DefaultComponents> {
 }
 
 describe('perf', () => {
-  let localComponents: DefaultComponents
-  let remoteComponents: DefaultComponents
+  let localComponents: Components
+  let remoteComponents: Components
 
   beforeEach(async () => {
     localComponents = await createComponents(0)
@@ -54,32 +70,32 @@ describe('perf', () => {
   })
 
   it('should run perf', async () => {
-    const client = new PerfService(localComponents)
-    const server = new PerfService(remoteComponents)
+    const client = perfService(defaultInit)(localComponents)
+    const server = perfService(defaultInit)(remoteComponents)
 
     await start(client)
     await start(server)
 
     // simulate connection between nodes
     const [localToRemote, remoteToLocal] = connectionPair(localComponents, remoteComponents)
-    localComponents.upgrader.dispatchEvent(new CustomEvent('connection', { detail: localToRemote }))
-    remoteComponents.upgrader.dispatchEvent(new CustomEvent('connection', { detail: remoteToLocal }))
+    localComponents.events.safeDispatchEvent('connection:open', { detail: localToRemote })
+    remoteComponents.events.safeDispatchEvent('connection:open', { detail: remoteToLocal })
 
     // Run Perf
-    await expect(client.startPerfOnStream(remoteComponents.peerId, 1n << 10n, 1n << 10n)).to.eventually.be.fulfilled()
+    await expect(client.perf(remoteComponents.peerId, 1n << 10n, 1n << 10n)).to.eventually.be.fulfilled()
   })
 
   it('local benchmark', async () => {
-    const client = new PerfService(localComponents)
-    const server = new PerfService(remoteComponents)
+    const client = perfService(defaultInit)(localComponents)
+    const server = perfService(defaultInit)(remoteComponents)
 
     await start(client)
     await start(server)
 
     // simulate connection between nodes
     const [localToRemote, remoteToLocal] = connectionPair(localComponents, remoteComponents)
-    localComponents.upgrader.dispatchEvent(new CustomEvent('connection', { detail: localToRemote }))
-    remoteComponents.upgrader.dispatchEvent(new CustomEvent('connection', { detail: remoteToLocal }))
+    localComponents.events.safeDispatchEvent('connection:open', { detail: localToRemote })
+    remoteComponents.events.safeDispatchEvent('connection:open', { detail: remoteToLocal })
 
     // Run Perf
     const downloadBandwidth = await client.measureDownloadBandwidth(remoteComponents.peerId, 10n << 20n)
