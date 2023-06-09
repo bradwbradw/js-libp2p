@@ -1,8 +1,10 @@
 /* eslint-disable no-console */
 
 import { createLibp2p } from 'libp2p'
+import { identifyService } from 'libp2p/identify'
 import { tcp } from '@libp2p/tcp'
 import { mplex } from '@libp2p/mplex'
+import { yamux } from '@chainsafe/libp2p-yamux'
 import { noise } from '@chainsafe/libp2p-noise'
 import { CID } from 'multiformats/cid'
 import { kadDHT } from '@libp2p/kad-dht'
@@ -15,9 +17,16 @@ const createNode = async () => {
       listen: ['/ip4/0.0.0.0/tcp/0']
     },
     transports: [tcp()],
-    streamMuxers: [mplex()],
+    streamMuxers: [yamux(), mplex()],
     connectionEncryption: [noise()],
-    dht: kadDHT()
+    services: {
+      dht: kadDHT({
+        // this is necessary because this node is not connected to the public network
+        // it can be removed if, for example bootstrappers are configured
+        allowQueryWithZeroPeers: true
+      }),
+      identify: identifyService()
+    }
   })
 
   return node
@@ -30,8 +39,12 @@ const createNode = async () => {
     createNode()
   ])
 
-  await node1.peerStore.addressBook.set(node2.peerId, node2.getMultiaddrs())
-  await node2.peerStore.addressBook.set(node3.peerId, node3.getMultiaddrs())
+  await node1.peerStore.patch(node2.peerId, {
+    multiaddrs: node2.getMultiaddrs()
+  })
+  await node2.peerStore.patch(node3.peerId, {
+    multiaddrs: node3.getMultiaddrs()
+  })
 
   await Promise.all([
     node1.dial(node2.peerId),
@@ -52,4 +65,4 @@ const createNode = async () => {
   const providers = await all(node3.contentRouting.findProviders(cid, { timeout: 3000 }))
 
   console.log('Found provider:', providers[0].id.toString())
-})();
+})()

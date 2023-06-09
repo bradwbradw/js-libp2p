@@ -20,11 +20,12 @@ import { createLibp2p } from 'libp2p'
 import { webSockets } from '@libp2p/websockets'
 import { noise } from '@chainsafe/libp2p-noise'
 import { mplex } from '@libp2p/mplex'
+import { yamux } from '@chainsafe/libp2p-yamux',
 
 const node = await createLibp2p({
   transports: [webSockets()],
   connectionEncryption: [noise()],
-  streamMuxers: [mplex()],
+  streamMuxers: [yamux(), mplex()],
   addresses: {
     listen: ['/ip4/0.0.0.0/tcp/0/ws']
     // TODO check "What is next?" section
@@ -81,7 +82,7 @@ if (!relayAddr) {
 const node = await createLibp2p({
   transports: [webSockets()],
   connectionEncryption: [noise()],
-  streamMuxers: [mplex()],
+  streamMuxers: [yamux(), mplex()],
   relay: {
     enabled: true,
     autoRelay: {
@@ -98,11 +99,9 @@ const conn = await node.dial(relayAddr)
 console.log(`Connected to the HOP relay ${conn.remotePeer.toString()}`)
 
 // Wait for connection and relay to be bind for the example purpose
-node.peerStore.addEventListener('change:multiaddrs', (evt) => {
+node.addEventListener('self:peer:update', (evt) => {
   // Updated self multiaddrs?
-  if (evt.detail.peerId.equals(node.peerId)) {
-    console.log(`Advertising with a relay address of ${node.getMultiaddrs()[0].toString()}`)
-  }
+  console.log(`Advertising with a relay address of ${node.getMultiaddrs()[0].toString()}`)
 })
 ```
 
@@ -135,6 +134,7 @@ import { createLibp2p } from 'libp2p'
 import { webSockets } from '@libp2p/websockets'
 import { noise } from '@chainsafe/libp2p-noise'
 import { mplex } from '@libp2p/mplex'
+import { yamux } from '@chainsafe/libp2p-yamux',
 
 const autoRelayNodeAddr = process.argv[2]
 if (!autoRelayNodeAddr) {
@@ -144,7 +144,7 @@ if (!autoRelayNodeAddr) {
 const node = await createLibp2p({
   transports: [webSockets()],
   connectionEncryption: [noise()],
-  streamMuxers: [mplex()]
+  streamMuxers: [yamux(), mplex()]
 })
 
 console.log(`Node started with id ${node.peerId.toString()}`)

@@ -1,12 +1,12 @@
-import defer from 'p-defer'
 import map from 'it-map'
-import type { Source, Duplex } from 'it-stream-types'
+import defer from 'p-defer'
 import { Uint8ArrayList } from 'uint8arraylist'
+import type { Source, Duplex } from 'it-stream-types'
 
 /**
  * A pair of streams where one drains from the other
  */
-export function pair (): Duplex<Uint8ArrayList, Uint8ArrayList | Uint8Array> {
+export function pair (): Duplex<AsyncGenerator<Uint8ArrayList>, Source<Uint8ArrayList | Uint8Array>, Promise<void>> {
   const deferred = defer<Source<Uint8ArrayList | Uint8Array>>()
   let piped = false
 

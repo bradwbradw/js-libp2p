@@ -1,20 +1,32 @@
-import { PubSubBaseProtocol, PubSubComponents } from '@libp2p/pubsub'
-import { plaintext } from '../../src/insecure/index.js'
-import { mplex } from '@libp2p/mplex'
+import { yamux } from '@chainsafe/libp2p-yamux'
+import { mockConnectionGater } from '@libp2p/interface-mocks'
+import { PubSubBaseProtocol, type PubSubComponents } from '@libp2p/pubsub'
 import { webSockets } from '@libp2p/websockets'
 import * as filters from '@libp2p/websockets/filters'
-import { MULTIADDRS_WEBSOCKETS } from '../fixtures/browser.js'
+import { multiaddr } from '@multiformats/multiaddr'
+import * as cborg from 'cborg'
 import mergeOptions from 'merge-options'
-import type { Message, PublishResult, PubSubInit, PubSubRPC, PubSubRPCMessage } from '@libp2p/interface-pubsub'
+import { circuitRelayTransport } from '../../src/circuit-relay/index.js'
+import { plaintext } from '../../src/insecure/index.js'
 import type { Libp2pInit, Libp2pOptions } from '../../src/index.js'
 import type { PeerId } from '@libp2p/interface-peer-id'
-import * as cborg from 'cborg'
+import type { Message, PublishResult, PubSub, PubSubInit, PubSubRPC, PubSubRPCMessage } from '@libp2p/interface-pubsub'
 
-const relayAddr = MULTIADDRS_WEBSOCKETS[0]
+const relayAddr = multiaddr(process.env.RELAY_MULTIADDR)
 
-export const baseOptions: Partial<Libp2pInit> = {
-  transports: [webSockets()],
-  streamMuxers: [mplex()],
+export const baseOptions: Partial<Libp2pInit<{ pubsub: PubSub }>> = {
+  addresses: {
+    listen: [
+      `${relayAddr}/p2p-circuit`
+    ]
+  },
+  transports: [
+    webSockets({
+      filter: filters.all
+    }),
+    circuitRelayTransport()
+  ],
+  streamMuxers: [yamux()],
   connectionEncryption: [plaintext()]
 }
 
@@ -67,12 +79,16 @@ class MockPubSub extends PubSubBaseProtocol {
   }
 }
 
-export const pubsubSubsystemOptions: Libp2pOptions = mergeOptions(baseOptions, {
-  pubsub: (components: PubSubComponents) => new MockPubSub(components),
+export const pubsubSubsystemOptions: Libp2pOptions<{ pubsub: PubSub }> = mergeOptions(baseOptions, {
   addresses: {
     listen: [`${relayAddr.toString()}/p2p-circuit`]
   },
   transports: [
-    webSockets({ filter: filters.all })
-  ]
+    webSockets({ filter: filters.all }),
+    circuitRelayTransport()
+  ],
+  services: {
+    pubsub: (components: PubSubComponents) => new MockPubSub(components)
+  },
+  connectionGater: mockConnectionGater()
 })

@@ -1,8 +1,10 @@
 /* eslint-disable no-console */
 
 import { createLibp2p } from 'libp2p'
+import { identifyService } from 'libp2p/identify'
 import { tcp } from '@libp2p/tcp'
 import { mplex } from '@libp2p/mplex'
+import { yamux } from '@chainsafe/libp2p-yamux'
 import { noise } from '@chainsafe/libp2p-noise'
 import { floodsub } from '@libp2p/floodsub'
 import { fromString as uint8ArrayFromString } from 'uint8arrays/from-string'
@@ -14,9 +16,12 @@ const createNode = async () => {
       listen: ['/ip4/0.0.0.0/tcp/0']
     },
     transports: [tcp()],
-    streamMuxers: [mplex()],
+    streamMuxers: [yamux(), mplex()],
     connectionEncryption: [noise()],
-    pubsub: floodsub()
+    services: {
+      pubsub: floodsub(),
+      identify: identifyService()
+    }
   })
 
   return node
@@ -31,23 +36,25 @@ const createNode = async () => {
   ])
 
   // Add node's 2 data to the PeerStore
-  await node1.peerStore.addressBook.set(node2.peerId, node2.getMultiaddrs())
+  await node1.peerStore.patch(node2.peerId, {
+    multiaddrs: node2.getMultiaddrs()
+  })
   await node1.dial(node2.peerId)
 
-  node1.pubsub.subscribe(topic)
-  node1.pubsub.addEventListener('message', (evt) => {
+  node1.services.pubsub.subscribe(topic)
+  node1.services.pubsub.addEventListener('message', (evt) => {
     console.log(`node1 received: ${uint8ArrayToString(evt.detail.data)} on topic ${evt.detail.topic}`)
   })
 
   // Will not receive own published messages by default
-  node2.pubsub.subscribe(topic)
-  node2.pubsub.addEventListener('message', (evt) => {
+  node2.services.pubsub.subscribe(topic)
+  node2.services.pubsub.addEventListener('message', (evt) => {
     console.log(`node2 received: ${uint8ArrayToString(evt.detail.data)} on topic ${evt.detail.topic}`)
   })
 
   // node2 publishes "news" every second
   setInterval(() => {
-    node2.pubsub.publish(topic, uint8ArrayFromString('Bird bird bird, bird is the word!')).catch(err => {
+    node2.services.pubsub.publish(topic, uint8ArrayFromString('Bird bird bird, bird is the word!')).catch(err => {
       console.error(err)
     })
   }, 1000)

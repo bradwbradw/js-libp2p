@@ -3,6 +3,9 @@ import { webSockets } from '@libp2p/websockets'
 import { noise } from '@chainsafe/libp2p-noise'
 import { mplex } from '@libp2p/mplex'
 import { multiaddr } from '@multiformats/multiaddr'
+import { yamux } from '@chainsafe/libp2p-yamux/dist/src'
+import { circuitRelayTransport } from 'libp2p/circuit-relay'
+import { identifyService } from 'libp2p/identify'
 
 async function main () {
   const relayAddr = process.argv[2]
@@ -12,20 +15,20 @@ async function main () {
 
   const node = await createLibp2p({
     transports: [
-      webSockets()
+      webSockets(),
+      circuitRelayTransport({
+        discoverRelays: 2
+      })
     ],
     connectionEncryption: [
       noise()
     ],
     streamMuxers: [
+      yamux(),
       mplex()
     ],
-    relay: {
-      enabled: true,
-      autoRelay: {
-        enabled: true,
-        maxListeners: 2
-      }
+    services: {
+      identify: identifyService()
     }
   })
 
@@ -36,13 +39,9 @@ async function main () {
   console.log(`Connected to the HOP relay ${conn.remotePeer.toString()}`)
 
   // Wait for connection and relay to be bind for the example purpose
-  node.peerStore.addEventListener('change:multiaddrs', (evt) => {
-    const { peerId } = evt.detail
-
+  node.addEventListener('self:peer:update', (evt) => {
     // Updated self multiaddrs?
-    if (peerId.equals(node.peerId)) {
-      console.log(`Advertising with a relay address of ${node.getMultiaddrs()[0].toString()}`)
-    }
+    console.log(`Advertising with a relay address of ${node.getMultiaddrs()[0].toString()}`)
   })
 }
 

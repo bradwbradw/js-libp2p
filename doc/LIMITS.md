@@ -9,7 +9,6 @@ This is important for [DoS](https://en.wikipedia.org/wiki/Denial-of-service_atta
 - [Connection limits](#connection-limits)
 - [Closing connections](#closing-connections)
 - [Inbound connection threshold](#inbound-connection-threshold)
-- [Data transfer and Event Loop limits](#data-transfer-and-event-loop-limits)
 - [Stream limits](#stream-limits)
   - [Mplex](#mplex)
   - [Yamux](#yamux)
@@ -30,7 +29,7 @@ We can also limit the number of connections in a "pending" state. These connecti
 All fields are optional. The default values are defined in [src/connection-manager/index.ts](https://github.com/libp2p/js-libp2p/blob/master/src/connection-manager/index.ts) - please see that file for the current values.
 
 ```ts
-const node = await createLibp2pNode({
+const node = await createLibp2p({
   connectionManager: {
     /**
      * The total number of connections allowed to be open at one time
@@ -70,65 +69,13 @@ To prevent individual peers from opening multiple connections to a node, an `inb
 All fields are optional. The default values are defined in [src/connection-manager/index.ts](https://github.com/libp2p/js-libp2p/blob/master/src/connection-manager/index.ts) - please see that file for the current values.
 
 ```ts
-const node = await createLibp2pNode({
+const node = await createLibp2p({
   connectionManager: {
     /**
      * A remote peer may attempt to open up to this many connections per second,
      * any more than that will be automatically rejected
      */
     inboundConnectionThreshold: number
-  }
-})
-```
-
-## Data transfer and Event Loop limits
-
-If metrics are enabled the node will track the amount of data being sent to and from the network. If the rate of data sent is over the threshold connections will be trimmed to free up resources. The default rate is `Ininity` so this must be explicitly enabled.
-
-Connections may also be trimmed if [event loop](https://nodejs.org/en/docs/guides/event-loop-timers-and-nexttick) latency exceeds the configured limit.
-
-All fields are optional. The default values are defined in [src/connection-manager/index.ts](https://github.com/libp2p/js-libp2p/blob/master/src/connection-manager/index.ts) - please see that file for the current values.
-
-```ts
-const node = await createLibp2pNode({
-  metrics: {
-    enabled: true
-  },
-  connectionManager: {
-    /**
-     * If the node transfers more than this amount of data in bytes/second
-     * connections to untagged peers or those not in the allow list may be
-     * closed.
-     *
-     * It is bytes per second.
-     */
-    maxData: number
-
-    /**
-     * If the node sends more than this amount of data in bytes/second
-     * connections to untagged peers or those not in the allow list may be
-     * closed.
-     *
-     * It is bytes per second.
-     */
-    maxSentData: number
-
-    /**
-     * If the node receives more than this amount of data in bytes/second
-     * connections to untagged peers or those not in the allow list may be
-     * closed.
-     *
-     * It is bytes per second.
-     */
-    maxReceivedData: number
-
-    /**
-     * If the event loop takes longer than this many ms to run, connections
-     * to untagged peers or those not in the allow list may be closed.
-     *
-     * It is milliseconds.
-     */
-    maxEventLoopDelay: number
   }
 })
 ```
@@ -146,7 +93,7 @@ These settings are done on a per-muxer basis, please see the README of the relev
 All fields are optional. The default values are defined in [@libp2p/mplex/src/mplex.ts](https://github.com/libp2p/js-libp2p-mplex/blob/master/src/mplex.ts) - please see that file for the current values.
 
 ```ts
-const node = await createLibp2pNode({
+const node = await createLibp2p({
   muxers: [
     mplex({
       /**
@@ -186,7 +133,7 @@ const node = await createLibp2pNode({
 All fields are optional. The default values are defined in [@chainsafe/libp2p-yamux/src/config.ts](https://github.com/ChainSafe/js-libp2p-yamux/blob/master/src/config.ts) - please see that file for the current values.
 
 ```ts
-const node = await createLibp2pNode({
+const node = await createLibp2p({
   muxers: [
     yamux({
       /**
@@ -239,7 +186,7 @@ The [@libp2p/tcp](https://github.com/libp2p/js-libp2p-tcp) transport allows addi
 All fields are optional. The full list of options is defined in [@libp2p/tcp/src/index.ts](https://github.com/libp2p/js-libp2p-tcp/blob/master/src/index.ts) - please see that file for more details.
 
 ```ts
-const node = await createLibp2pNode({
+const node = await createLibp2p({
   transports: [
     tcp({
       /**
@@ -268,7 +215,7 @@ const node = await createLibp2pNode({
 It is possible to configure some hosts to always accept connections from and some to always reject connections from.
 
 ```js
-const node = await createLibp2pNode({
+const node = await createLibp2p({
   connectionManager: {
     /**
      * A list of multiaddrs, any connection with a `remoteAddress` property

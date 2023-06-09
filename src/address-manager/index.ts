@@ -1,10 +1,15 @@
-import type { AddressManagerEvents } from '@libp2p/interface-address-manager'
-import { CustomEvent, EventEmitter } from '@libp2p/interfaces/events'
-import type { Multiaddr } from '@multiformats/multiaddr'
-import { multiaddr } from '@multiformats/multiaddr'
+import { logger } from '@libp2p/logger'
 import { peerIdFromString } from '@libp2p/peer-id'
+import { multiaddr } from '@multiformats/multiaddr'
+import { debounce } from './utils.js'
+import type { Libp2pEvents } from '@libp2p/interface-libp2p'
 import type { PeerId } from '@libp2p/interface-peer-id'
+import type { PeerStore } from '@libp2p/interface-peer-store'
 import type { TransportManager } from '@libp2p/interface-transport'
+import type { EventEmitter } from '@libp2p/interfaces/events'
+import type { Multiaddr } from '@multiformats/multiaddr'
+
+const log = logger('libp2p:address-manager')
 
 export interface AddressManagerInit {
   /**
@@ -32,6 +37,8 @@ export interface AddressManagerInit {
 export interface DefaultAddressManagerComponents {
   peerId: PeerId
   transportManager: TransportManager
+  peerStore: PeerStore
+  events: EventEmitter<Libp2pEvents>
 }
 
 /**
@@ -44,12 +51,35 @@ export interface AddressFilter {
 
 const defaultAddressFilter = (addrs: Multiaddr[]): Multiaddr[] => addrs
 
-export class DefaultAddressManager extends EventEmitter<AddressManagerEvents> {
+interface ObservedAddressMetadata {
+  confident: boolean
+}
+
+/**
+ * If the passed multiaddr contains the passed peer id, remove it
+ */
+function stripPeerId (ma: Multiaddr, peerId: PeerId): Multiaddr {
+  const observedPeerIdStr = ma.getPeerId()
+
+  // strip our peer id if it has been passed
+  if (observedPeerIdStr != null) {
+    const observedPeerId = peerIdFromString(observedPeerIdStr)
+
+    // use same encoding for comparison
+    if (observedPeerId.equals(peerId)) {
+      ma = ma.decapsulate(multiaddr(`/p2p/${peerId.toString()}`))
+    }
+  }
+
+  return ma
+}
+
+export class DefaultAddressManager {
   private readonly components: DefaultAddressManagerComponents
   // this is an array to allow for duplicates, e.g. multiples of `/ip4/0.0.0.0/tcp/0`
   private readonly listen: string[]
   private readonly announce: Set<string>
-  private readonly observed: Set<string>
+  private readonly observed: Map<string, ObservedAddressMetadata>
   private readonly announceFilter: AddressFilter
 
   /**
@@ -58,16 +88,51 @@ export class DefaultAddressManager extends EventEmitter<AddressManagerEvents> {
    * The listen addresses will be used by the libp2p transports to listen for new connections,
    * while the announce addresses will be used for the peer addresses' to other peers in the network.
    */
-  constructor (components: DefaultAddressManagerComponents, init: AddressManagerInit) {
-    super()
-
+  constructor (components: DefaultAddressManagerComponents, init: AddressManagerInit = {}) {
     const { listen = [], announce = [] } = init
 
     this.components = components
     this.listen = listen.map(ma => ma.toString())
     this.announce = new Set(announce.map(ma => ma.toString()))
-    this.observed = new Set()
+    this.observed = new Map()
     this.announceFilter = init.announceFilter ?? defaultAddressFilter
+
+    // this method gets called repeatedly on startup when transports start listening so
+    // debounce it so we don't cause multiple self:peer:update events to be emitted
+    this._updatePeerStoreAddresses = debounce(this._updatePeerStoreAddresses.bind(this), 1000)
+
+    // update our stored addresses when new transports listen
+    components.events.addEventListener('transport:listening', () => {
+      this._updatePeerStoreAddresses()
+    })
+    // update our stored addresses when existing transports stop listening
+    components.events.addEventListener('transport:close', () => {
+      this._updatePeerStoreAddresses()
+    })
+  }
+
+  _updatePeerStoreAddresses (): void {
+    // if announce addresses have been configured, ensure they make it into our peer
+    // record for things like identify
+    const addrs = this.getAnnounceAddrs()
+      .concat(this.components.transportManager.getAddrs())
+      .concat(
+        [...this.observed.entries()]
+          .filter(([_, metadata]) => metadata.confident)
+          .map(([str]) => multiaddr(str))
+      ).map(ma => {
+        // strip our peer id if it is present
+        if (ma.getPeerId() === this.components.peerId.toString()) {
+          return ma.decapsulate(`/p2p/${this.components.peerId.toString()}`)
+        }
+
+        return ma
+      })
+
+    this.components.peerStore.patch(this.components.peerId, {
+      multiaddrs: addrs
+    })
+      .catch(err => { log.error('error updating addresses', err) })
   }
 
   /**
@@ -88,52 +153,51 @@ export class DefaultAddressManager extends EventEmitter<AddressManagerEvents> {
    * Get observed multiaddrs
    */
   getObservedAddrs (): Multiaddr[] {
-    return Array.from(this.observed).map((a) => multiaddr(a))
-  }
-
-  /**
-   * Add peer observed addresses
-   * Signal that we have confidence an observed multiaddr is publicly dialable -
-   * this will make it appear in the output of getAddresses()
-   */
-  confirmObservedAddr (addr: Multiaddr): void {
-
-  }
-
-  /**
-   * Signal that we do not have confidence an observed multiaddr is publicly dialable -
-   * this will remove it from the output of getObservedAddrs()
-   */
-  removeObservedAddr (addr: Multiaddr): void {
-
+    return Array.from(this.observed).map(([a]) => multiaddr(a))
   }
 
   /**
    * Add peer observed addresses
    */
-  addObservedAddr (addr: string | Multiaddr): void {
-    let ma = multiaddr(addr)
-    const remotePeer = ma.getPeerId()
-
-    // strip our peer id if it has been passed
-    if (remotePeer != null) {
-      const remotePeerId = peerIdFromString(remotePeer)
-
-      // use same encoding for comparison
-      if (remotePeerId.equals(this.components.peerId)) {
-        ma = ma.decapsulate(multiaddr(`/p2p/${this.components.peerId.toString()}`))
-      }
-    }
-
-    const addrString = ma.toString()
+  addObservedAddr (addr: Multiaddr): void {
+    addr = stripPeerId(addr, this.components.peerId)
+    const addrString = addr.toString()
 
     // do not trigger the change:addresses event if we already know about this address
     if (this.observed.has(addrString)) {
       return
     }
 
-    this.observed.add(addrString)
-    this.dispatchEvent(new CustomEvent('change:addresses'))
+    this.observed.set(addrString, {
+      confident: false
+    })
+  }
+
+  confirmObservedAddr (addr: Multiaddr): void {
+    addr = stripPeerId(addr, this.components.peerId)
+    const addrString = addr.toString()
+
+    const metadata = this.observed.get(addrString) ?? {
+      confident: false
+    }
+
+    const startingConfidence = metadata.confident
+
+    this.observed.set(addrString, {
+      confident: true
+    })
+
+    // only trigger the 'self:peer:update' event if our confidence in an address has changed
+    if (!startingConfidence) {
+      this._updatePeerStoreAddresses()
+    }
+  }
+
+  removeObservedAddr (addr: Multiaddr): void {
+    addr = stripPeerId(addr, this.components.peerId)
+    const addrString = addr.toString()
+
+    this.observed.delete(addrString)
   }
 
   getAddresses (): Multiaddr[] {
@@ -144,7 +208,12 @@ export class DefaultAddressManager extends EventEmitter<AddressManagerEvents> {
       addrs = this.components.transportManager.getAddrs().map(ma => ma.toString())
     }
 
-    addrs = addrs.concat(this.getObservedAddrs().map(ma => ma.toString()))
+    // add observed addresses we are confident in
+    addrs = addrs.concat(
+      Array.from(this.observed)
+        .filter(([ma, metadata]) => metadata.confident)
+        .map(([ma]) => ma)
+    )
 
     // dedupe multiaddrs
     const addrSet = new Set(addrs)

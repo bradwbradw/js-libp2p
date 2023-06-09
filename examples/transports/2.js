@@ -4,6 +4,7 @@ import { createLibp2p } from 'libp2p'
 import { tcp } from '@libp2p/tcp'
 import { noise } from '@chainsafe/libp2p-noise'
 import { mplex } from '@libp2p/mplex'
+import { yamux } from '@chainsafe/libp2p-yamux'
 import { toString as uint8ArrayToString } from 'uint8arrays/to-string'
 import { fromString as uint8ArrayFromString } from 'uint8arrays/from-string'
 import { pipe } from 'it-pipe'
@@ -18,7 +19,7 @@ const createNode = async () => {
     },
     transports: [tcp()],
     connectionEncryption: [noise()],
-    streamMuxers: [mplex()]
+    streamMuxers: [yamux(), mplex()]
   })
 
   return node
@@ -29,7 +30,7 @@ function printAddrs (node, number) {
   node.getMultiaddrs().forEach((ma) => console.log(ma.toString()))
 }
 
-;(async () => {
+(async () => {
   const [node1, node2] = await Promise.all([
     createNode(),
     createNode()
@@ -51,11 +52,13 @@ function printAddrs (node, number) {
     console.log(uint8ArrayToString(result))
   })
 
-  await node1.peerStore.addressBook.set(node2.peerId, node2.getMultiaddrs())
+  await node1.peerStore.patch(node2.peerId, {
+    multiaddrs: node2.getMultiaddrs()
+  })
   const stream = await node1.dialProtocol(node2.peerId, '/print')
 
   await pipe(
     ['Hello', ' ', 'p2p', ' ', 'world', '!'].map(str => uint8ArrayFromString(str)),
     stream
   )
-})();
+})()

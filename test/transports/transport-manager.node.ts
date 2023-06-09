@@ -1,21 +1,20 @@
 /* eslint-env mocha */
 
-import { expect } from 'aegir/chai'
-import { MemoryDatastore } from 'datastore-core/memory'
-import { DefaultAddressManager } from '../../src/address-manager/index.js'
-import { DefaultTransportManager } from '../../src/transport-manager.js'
+import { mockUpgrader } from '@libp2p/interface-mocks'
+import { EventEmitter } from '@libp2p/interfaces/events'
+import { createEd25519PeerId } from '@libp2p/peer-id-factory'
 import { PersistentPeerStore } from '@libp2p/peer-store'
-import { PeerRecord } from '@libp2p/peer-record'
 import { tcp } from '@libp2p/tcp'
 import { multiaddr } from '@multiformats/multiaddr'
-import { mockUpgrader } from '@libp2p/interface-mocks'
-import sinon from 'sinon'
-import Peers from '../fixtures/peers.js'
+import { expect } from 'aegir/chai'
+import { MemoryDatastore } from 'datastore-core/memory'
+import { pEvent } from 'p-event'
 import pWaitFor from 'p-wait-for'
+import sinon from 'sinon'
+import { DefaultAddressManager } from '../../src/address-manager/index.js'
+import { defaultComponents, type Components } from '../../src/components.js'
+import { DefaultTransportManager } from '../../src/transport-manager.js'
 import type { PeerId } from '@libp2p/interface-peer-id'
-import { createFromJSON } from '@libp2p/peer-id-factory'
-import { PeerRecordUpdater } from '../../src/peer-record-updater.js'
-import { DefaultComponents } from '../../src/components.js'
 
 const addrs = [
   multiaddr('/ip4/127.0.0.1/tcp/0'),
@@ -25,17 +24,19 @@ const addrs = [
 describe('Transport Manager (TCP)', () => {
   let tm: DefaultTransportManager
   let localPeer: PeerId
-  let components: DefaultComponents
+  let components: Components
 
   before(async () => {
-    localPeer = await createFromJSON(Peers[0])
+    localPeer = await createEd25519PeerId()
   })
 
   beforeEach(() => {
-    components = new DefaultComponents({
+    const events = new EventEmitter()
+    components = defaultComponents({
       peerId: localPeer,
+      events,
       datastore: new MemoryDatastore(),
-      upgrader: mockUpgrader()
+      upgrader: mockUpgrader({ events })
     })
     components.addressManager = new DefaultAddressManager(components, { listen: addrs.map(addr => addr.toString()) })
     components.peerStore = new PersistentPeerStore(components)
@@ -76,34 +77,6 @@ describe('Transport Manager (TCP)', () => {
     expect(spyListener.called).to.be.true()
   })
 
-  it('should create self signed peer record on listen', async () => {
-    const peerRecordUpdater = new PeerRecordUpdater(components)
-    await peerRecordUpdater.start()
-
-    let signedPeerRecord = await components.peerStore.addressBook.getPeerRecord(localPeer)
-    expect(signedPeerRecord).to.not.exist()
-
-    tm.add(tcp()())
-    await tm.listen(addrs)
-
-    // Should created Self Peer record on new listen address, but it is done async
-    // with no event so we have to wait a bit
-    await pWaitFor(async () => {
-      signedPeerRecord = await components.peerStore.addressBook.getPeerRecord(localPeer)
-
-      return signedPeerRecord != null
-    }, { interval: 100, timeout: 2000 })
-
-    if (signedPeerRecord == null) {
-      throw new Error('Could not get signed peer record')
-    }
-
-    const record = PeerRecord.createFromProtobuf(signedPeerRecord.payload)
-    expect(record).to.exist()
-    expect(record.multiaddrs.length).to.equal(addrs.length)
-    await peerRecordUpdater.stop()
-  })
-
   it('should be able to dial', async () => {
     tm.add(tcp()())
     await tm.listen(addrs)
@@ -116,5 +89,40 @@ describe('Transport Manager (TCP)', () => {
     const connection = await tm.dial(addr)
     expect(connection).to.exist()
     await connection.close()
+  })
+
+  it('should remove listeners when they stop listening', async () => {
+    const transport = tcp()()
+    tm.add(transport)
+
+    expect(tm.getListeners()).to.have.lengthOf(0)
+
+    const spyListener = sinon.spy(transport, 'createListener')
+
+    await tm.listen(addrs)
+
+    expect(spyListener.callCount).to.equal(addrs.length)
+
+    // wait for listeners to start listening
+    await pWaitFor(async () => {
+      return tm.getListeners().length === addrs.length
+    })
+
+    // wait for listeners to stop listening
+    const closePromise = Promise.all(
+      spyListener.getCalls().map(async call => {
+        return pEvent(call.returnValue, 'close')
+      })
+    )
+
+    await Promise.all(
+      tm.getListeners().map(async l => { await l.close() })
+    )
+
+    await closePromise
+
+    expect(tm.getListeners()).to.have.lengthOf(0)
+
+    await tm.stop()
   })
 })

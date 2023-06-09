@@ -1,11 +1,11 @@
-import type { Multiaddr } from '@multiformats/multiaddr'
-import errCode from 'err-code'
-import { OPEN, CLOSING, CLOSED } from '@libp2p/interface-connection/status'
 import { symbol } from '@libp2p/interface-connection'
+import { OPEN, CLOSING, CLOSED } from '@libp2p/interface-connection/status'
+import { CodeError } from '@libp2p/interfaces/errors'
+import { logger } from '@libp2p/logger'
 import type { Connection, ConnectionStat, Stream } from '@libp2p/interface-connection'
 import type { PeerId } from '@libp2p/interface-peer-id'
-import { logger } from '@libp2p/logger'
 import type { AbortOptions } from '@libp2p/interfaces'
+import type { Multiaddr } from '@multiformats/multiaddr'
 
 const log = logger('libp2p:connection')
 
@@ -87,18 +87,14 @@ export class ConnectionImpl implements Connection {
     this._closing = false
   }
 
-  get [Symbol.toStringTag] () {
-    return 'Connection'
-  }
+  readonly [Symbol.toStringTag] = 'Connection'
 
-  get [symbol] () {
-    return true
-  }
+  readonly [symbol] = true
 
   /**
    * Get all the streams of the muxer
    */
-  get streams () {
+  get streams (): Stream[] {
     return this._getStreams()
   }
 
@@ -107,11 +103,11 @@ export class ConnectionImpl implements Connection {
    */
   async newStream (protocols: string | string[], options?: AbortOptions): Promise<Stream> {
     if (this.stat.status === CLOSING) {
-      throw errCode(new Error('the connection is being closed'), 'ERR_CONNECTION_BEING_CLOSED')
+      throw new CodeError('the connection is being closed', 'ERR_CONNECTION_BEING_CLOSED')
     }
 
     if (this.stat.status === CLOSED) {
-      throw errCode(new Error('the connection is closed'), 'ERR_CONNECTION_CLOSED')
+      throw new CodeError('the connection is closed', 'ERR_CONNECTION_CLOSED')
     }
 
     if (!Array.isArray(protocols)) {
@@ -128,21 +124,21 @@ export class ConnectionImpl implements Connection {
   /**
    * Add a stream when it is opened to the registry
    */
-  addStream (stream: Stream) {
+  addStream (stream: Stream): void {
     stream.stat.direction = 'inbound'
   }
 
   /**
    * Remove stream registry after it is closed
    */
-  removeStream (id: string) {
+  removeStream (id: string): void {
 
   }
 
   /**
    * Close the connection
    */
-  async close () {
+  async close (): Promise<void> {
     if (this.stat.status === CLOSED || this._closing) {
       return
     }
@@ -151,7 +147,7 @@ export class ConnectionImpl implements Connection {
 
     // close all streams - this can throw if we're not multiplexed
     try {
-      this.streams.forEach(s => s.close())
+      this.streams.forEach(s => { s.close() })
     } catch (err) {
       log.error(err)
     }
